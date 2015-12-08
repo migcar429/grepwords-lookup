@@ -10,45 +10,55 @@ f = open('/Users/Mig/Desktop/grepkey.txt', 'r')
 grepkey = f.read()
 f.close()
 
+# File name of .xlsx or .csv with keywords and range on sheet.
+keywords_list = 'specialtykeywords.xlsx'
+keywords_range = 'B2'
+
+db_name = 'kw.db'
+
 # Set this to the minimum search volume that the client cares about.
 search_vol_threshold = 1000
 
+# Exclude related keywords containing these strings:
 taboo_words = ['salary', 'what is', 'what does']
 
 
-
-def readspecialties(filename):
+def read_specialties(filename):
 	# Open workbook, take the list of specialty values.
 	path = os.path.dirname(os.path.abspath(__file__))
 	wb = Workbook(path + '/' + filename)
 	
-	specialties = list(set(Range('B2').vertical.value))
+	# Remove duplicates.
+	specialties = list(set(Range(keywords_range).vertical.value))
 
 	return specialties
 
-def lookupvolume(specialties):
-	search_vol_data = {}
+def lookup_volume(specialties):
+	# Data = list of tuples to enable usage of Cursor.executemany()
+	search_vol_data = []
 	for specialty in specialties:
 		r = requests.get('http://api.grepwords.com/lookup?apikey={0}&q={1}'.format(grepkey, specialty))
 		r = r.json()
 
 		# Placeholder to break at 10 queries (for testing).
-		if specialty == specialties[10]:
+		'''if specialty == specialties[10]:
 			global foo
 			foo = search_vol_data
-			break
+			break'''
 
+		# ==1 condition is because API returns {error:error_info} for no search data.
 		if len(r[0]) == 1:
-			search_vol_data.update({specialty:0})
+			search_vol_data.append((specialty, 0))
 		else:
-			search_vol_data.update({specialty:r[0]['gms']})
+			# r[0] because API returns a 1 element list.
+			search_vol_data.append((specialty, r[0]['gms']))
 
 	pprint.pprint(search_vol_data)
-
+	print len(search_vol_data)
 	return search_vol_data
 
 
-def lookuprelated(specialties):
+def lookup_related(specialties):
 	related_vol_data = []
 
 	#related_words_pre = ['nearest', 'child', 'find', 'find a', 'medicare', 'medicaid']
@@ -62,31 +72,41 @@ def lookuprelated(specialties):
 		for kw in r:
 			print kw['keyword'], '   ', kw['gms']'''
 
+	# For each specialty, query related keywords via API and then append tuples of values to a list.
 	for specialty in specialties:
 		r = requests.get('http://api.grepwords.com/related?apikey={0}&q={1}&results={2}'.format(grepkey, specialty, 20))
 		r = r.json()
 		for kw in r:
+			# API returns the keyword itself as well, this is to exclude that.
 			if kw['keyword'].lower() == specialty.lower():
 				pass
 			# Filter search volume + makes sure that the keyword (all words in search term) is found within the related term.
 			elif fuzz.token_set_ratio(kw['keyword'].lower(), specialty.lower()) == 100 and kw['gms'] >= search_vol_threshold:
+				# Checks taboo_words in related keywords, breaks out of loop the moment a taboo_word is found.
 				for taboo_word in taboo_words:
 					if taboo_word in kw['keyword']:
 						break
+				# When taboo_words is exhausted (i.e. contains no useless strings), continues to append the data.
 				else:
 					related_vol_data.append((specialty, kw['keyword'], kw['gms']))
 					#related_vol_data.update({kw['keyword']:kw['gms']})
 
 	pprint.pprint(related_vol_data)
+	print len(related_vol_data)
 	return related_vol_data
 
+def write_to_db(*args, db_name):
+	conn = sqlite3.connect(db_name)
+	c = conn.cursor()
 
 
 def main():
 	
-	specialties = readspecialties('specialtykeywords.xlsx')
-	lookupvolume(specialties)
-	lookuprelated(foo)
+	specialties = read_specialties(keywords_list)
+	search_vol_data = lookup_volume(specialties)
+	related_vol_data = lookup_related(specialties)
+
+
 
 if __name__ == '__main__':
 	main()
